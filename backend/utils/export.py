@@ -47,24 +47,27 @@ class ExportService:
         columns: Optional[List[tuple]] = None
     ) -> str:
         """
-        Export data to CSV string
-        
+        Export data to CSV string with UTF-8 BOM for Excel compatibility
+
         Args:
             data: List of dictionaries to export
             columns: List of (key, display_name) tuples
         """
         if not data:
             return ""
-        
+
         columns = columns or cls.DEFAULT_COLUMNS
-        
+
         output = StringIO()
+        # 加入 UTF-8 BOM，確保 Excel 正確識別編碼
+        output.write('\ufeff')
+
         writer = csv.writer(output)
-        
+
         # Write header
         header = [col[1] for col in columns]
         writer.writerow(header)
-        
+
         # Write data rows
         for row in data:
             values = []
@@ -74,7 +77,7 @@ class ExportService:
                     value = round(value, 2)
                 values.append(value if value is not None else "")
             writer.writerow(values)
-        
+
         return output.getvalue()
     
     @classmethod

@@ -8,6 +8,10 @@ interface StoreState {
     setTheme: (theme: 'light' | 'dark') => void;
     toggleTheme: () => void;
 
+    // Global query date (全局日期狀態)
+    queryDate: string;
+    setQueryDate: (date: string) => void;
+
     // Filter params
     filterParams: FilterParams;
     setFilterParams: (params: Partial<FilterParams>) => void;
@@ -49,6 +53,10 @@ export const useStore = create<StoreState>()(
             theme: 'dark',
             setTheme: (theme) => set({ theme }),
             toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
+
+            // Global query date
+            queryDate: '',
+            setQueryDate: (date) => set({ queryDate: date }),
 
             // Filter params
             filterParams: defaultFilterParams,

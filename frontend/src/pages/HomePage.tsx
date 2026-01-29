@@ -1,15 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FilterPanel } from '@/components/FilterPanel';
 import { StockTable } from '@/components/StockTable';
 import { DashboardCharts } from '@/components/DashboardCharts';
+import { StockAnalysisDialog } from '@/components/StockAnalysisDialog';
 import { filterStocks, getTradingDate } from '@/services/api';
 import { useStore } from '@/store/store';
 import type { Stock } from '@/types';
 
 export function HomePage() {
-    const { filterParams, setFilterParams, setSelectedStock, setAnalysisModalOpen } = useStore();
-    const [queryDate, setQueryDate] = useState<string>('');
+    const { filterParams, setFilterParams, queryDate, setQueryDate } = useStore();
+
+    // K-line chart dialog state
+    const [selectedStock, setSelectedStock] = useState<{ symbol: string; name?: string } | null>(null);
+    const [isChartDialogOpen, setIsChartDialogOpen] = useState(false);
+
+    const openChartDialog = (symbol: string, name?: string) => {
+        setSelectedStock({ symbol, name });
+        setIsChartDialogOpen(true);
+    };
+
+    const closeChartDialog = () => {
+        setIsChartDialogOpen(false);
+        setSelectedStock(null);
+    };
 
     // Get latest trading date
     const { data: tradingDateData } = useQuery({
@@ -17,11 +31,12 @@ export function HomePage() {
         queryFn: getTradingDate,
     });
 
+    // 只有當全局日期為空時才設定初始值
     useEffect(() => {
-        if (tradingDateData?.latest_trading_day) {
+        if (tradingDateData?.latest_trading_day && !queryDate) {
             setQueryDate(tradingDateData.latest_trading_day);
         }
-    }, [tradingDateData]);
+    }, [tradingDateData, queryDate, setQueryDate]);
 
     // Filter stocks query
     const { data, isLoading, refetch } = useQuery({
@@ -39,8 +54,7 @@ export function HomePage() {
     };
 
     const handleStockClick = (stock: Stock) => {
-        setSelectedStock(stock);
-        setAnalysisModalOpen(true);
+        openChartDialog(stock.symbol, stock.name);
     };
 
     return (
@@ -84,6 +98,14 @@ export function HomePage() {
                 onPageChange={handlePageChange}
                 onStockClick={handleStockClick}
                 isLoading={isLoading}
+            />
+
+            {/* K線圖彈窗 */}
+            <StockAnalysisDialog
+                open={isChartDialogOpen}
+                onClose={closeChartDialog}
+                symbol={selectedStock?.symbol || null}
+                name={selectedStock?.name}
             />
         </div>
     );

@@ -19,10 +19,11 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { InteractiveChartContainer, type InteractiveChartContainerRef } from '@/components/charts';
+import { type CrosshairData } from '@/components/charts/LightweightKLineChart';
 import { getKLineData } from '@/services/api';
 import {
     TrendingUp, TrendingDown, BarChart2, Loader2, RefreshCw,
-    Database, ZoomIn, ZoomOut, AlertTriangle, Printer
+    Database, AlertTriangle, Printer, Lock, Unlock
 } from 'lucide-react';
 import type { KLineResponse } from '@/types';
 
@@ -53,17 +54,44 @@ const DEFAULT_YEARS = 5;
 export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalysisDialogProps) {
     const [period, setPeriod] = useState<Period>('day');
     const [forceRefresh, setForceRefresh] = useState(false);
-    const [chartSize, setChartSize] = useState<ChartSize>('normal');
+    const [chartSize] = useState<ChartSize>('xlarge');
     const [retryCount, setRetryCount] = useState(0);
+    // Crosshair 即時數據
+    const [crosshairData, setCrosshairData] = useState<CrosshairData | null>(null);
+    // 鎖定的 crosshair 資料（用於列印）
+    const [lockedData, setLockedData] = useState<CrosshairData | null>(null);
+    // 是否鎖定狀態
+    const [isLocked, setIsLocked] = useState(false);
 
     // 使用 Ref 存取圖表元件以進行截圖
     const chartsRef = useRef<InteractiveChartContainerRef>(null);
+
+    // 處理 crosshair 移動（如果沒鎖定才更新）
+    const handleCrosshairMove = useCallback((data: CrosshairData | null) => {
+        if (!isLocked) {
+            setCrosshairData(data);
+        }
+    }, [isLocked]);
+
+    // 切換鎖定狀態
+    const toggleLock = useCallback(() => {
+        if (isLocked) {
+            // 解鎖
+            setIsLocked(false);
+            setLockedData(null);
+        } else {
+            // 鎖定當前數據
+            setIsLocked(true);
+            setLockedData(crosshairData);
+        }
+    }, [isLocked, crosshairData]);
 
     // 重置狀態
     useEffect(() => {
         if (open && symbol) {
             setRetryCount(0);
-            setChartSize('normal'); // 重置為正常大小
+            setIsLocked(false);
+            setLockedData(null);
         }
     }, [open, symbol]);
 
@@ -96,17 +124,77 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
     const dataRange = data?.data_range;
     const dataCount = data?.data_count || 0;
 
-    const isUp = (latestPrice?.change || 0) >= 0;
+    // 計算即時顯示的價格數據（優先使用鎖定數據，其次 crosshair 數據）
+    const displayData = useMemo(() => {
+        const activeData = isLocked ? lockedData : crosshairData;
+        if (activeData && activeData.close != null) {
+            // 從 klineData 找到前一天的收盤價來計算漲跌
+            const idx = klineData.findIndex(d => d.date === activeData.date);
+            const prevClose = idx > 0 ? klineData[idx - 1].close : null;
+            const change = prevClose != null && activeData.close != null ? activeData.close - prevClose : null;
+            const changePct = prevClose != null && prevClose !== 0 && change != null ? (change / prevClose) * 100 : null;
+            // 估算成交金額（收盤價 * 成交量 / 1億）
+            const amount = activeData.close != null && activeData.volume ? (activeData.close * activeData.volume / 100000000) : null;
+            return {
+                open: activeData.open,
+                high: activeData.high,
+                low: activeData.low,
+                close: activeData.close,
+                change,
+                changePct,
+                volume: activeData.volume,
+                amount,
+                date: activeData.date,
+            };
+        }
+        // 預設使用最新價格（從最後一筆 klineData 取得開高低）
+        const lastData = klineData.length > 0 ? klineData[klineData.length - 1] : null;
+        return latestPrice ? {
+            open: lastData?.open ?? null,
+            high: lastData?.high ?? null,
+            low: lastData?.low ?? null,
+            close: latestPrice.close,
+            change: latestPrice.change,
+            changePct: latestPrice.change_pct,
+            volume: latestPrice.volume,
+            amount: latestPrice.amount,
+            date: null,
+        } : null;
+    }, [isLocked, lockedData, crosshairData, latestPrice, klineData]);
+
+    const isUp = (displayData?.change || 0) >= 0;
     const changeColor = isUp ? 'text-red-500' : 'text-green-600';
     const PriceIcon = isUp ? TrendingUp : TrendingDown;
 
     // 專用列印功能 - 使用圖表原生截圖功能 (更清晰、無跑版)
+    // 列印鎖定的日期，該日期以後的資料不印
     const handlePrint = useCallback(async () => {
         if (!chartsRef.current || !symbol) return;
 
         try {
-            // 取得各個圖表的截圖
-            const images = await chartsRef.current.captureCharts();
+            // 使用鎖定的資料，若沒鎖定則用當前 crosshair
+            const activeData = isLocked ? lockedData : crosshairData;
+
+            // 判斷列印的目標日期
+            const targetDate = activeData?.date || (klineData.length > 0 ? klineData[klineData.length - 1].date : null);
+
+            // 找到目標日期在 klineData 中的索引
+            const targetIdx = targetDate ? klineData.findIndex(d => d.date === targetDate) : klineData.length - 1;
+
+            // 取得目標日期的資料
+            const printData = targetIdx >= 0 ? klineData[targetIdx] : null;
+
+            // 計算漲跌幅（從目標日期與前一天）
+            const prevData = targetIdx > 0 ? klineData[targetIdx - 1] : null;
+            const chartChange = printData?.close && prevData?.close ? printData.close - prevData.close : null;
+            const chartChangePct = chartChange !== null && prevData?.close ? (chartChange / prevData.close) * 100 : null;
+            const chartIsUp = (chartChange ?? 0) >= 0;
+
+            // 取得圖表截圖（精準截斷到目標日期）
+            const images = await chartsRef.current.captureCharts(targetDate || undefined);
+
+            // 週期標籤
+            const periodLabel = period === 'day' ? '日K線' : period === 'week' ? '週K線' : '月K線';
 
             const printWindow = window.open('', '_blank', 'width=1123,height=794');
 
@@ -115,42 +203,63 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
                     <!DOCTYPE html>
                     <html>
                     <head>
-                        <title>${symbol} ${stockName} K線圖</title>
+                        <title>${symbol} ${stockName} ${periodLabel}</title>
                         <style>
-                            @page { size: A4 landscape; margin: 10mm; }
+                            @page { size: A4 landscape; margin: 8mm; }
                             * { box-sizing: border-box; margin: 0; padding: 0; }
-                            body { 
+                            body {
                                 font-family: "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                                padding: 20px;
+                                padding: 12px;
                                 background: #fff;
                                 -webkit-print-color-adjust: exact;
                                 print-color-adjust: exact;
                             }
                             .container { width: 100%; max-width: 280mm; margin: 0 auto; }
-                            .header { 
+                            .header {
                                 display: flex; justify-content: space-between; align-items: flex-end;
-                                margin-bottom: 20px; padding-bottom: 10px; border-bottom: 3px solid #000;
+                                margin-bottom: 10px; padding-bottom: 8px; border-bottom: 3px solid #000;
                             }
                             .title-group { display: flex; align-items: baseline; gap: 15px; }
-                            .symbol { font-size: 32px; font-weight: 900; color: #000; }
-                            .name { font-size: 24px; font-weight: bold; color: #333; }
-                            .meta { color: #666; font-size: 12px; }
-                            .price-grid { 
-                                display: flex; justify-content: space-between; padding: 15px 20px;
-                                background: #f1f5f9; border-radius: 12px; margin-bottom: 20px; border: 1px solid #e2e8f0;
+                            .symbol { font-size: 28px; font-weight: 900; color: #000; }
+                            .name { font-size: 20px; font-weight: bold; color: #333; }
+                            .meta { color: #666; font-size: 11px; }
+                            .info-section {
+                                display: flex; gap: 10px; margin-bottom: 10px;
+                            }
+                            .price-grid {
+                                display: flex; flex: 1; padding: 10px 15px;
+                                background: #f1f5f9; border-radius: 8px; border: 1px solid #e2e8f0;
                             }
                             .price-item { text-align: center; flex: 1; border-right: 1px solid #cbd5e1; }
                             .price-item:last-child { border-right: none; }
-                            .price-label { font-size: 13px; color: #64748b; margin-bottom: 5px; font-weight: 500; }
-                            .price-value { font-size: 22px; font-weight: 800; }
+                            .price-label { font-size: 11px; color: #64748b; margin-bottom: 3px; font-weight: 500; }
+                            .price-value { font-size: 16px; font-weight: 800; }
+                            .ma-grid {
+                                display: flex; flex: 1; padding: 10px 15px;
+                                background: #fefce8; border-radius: 8px; border: 1px solid #fef08a;
+                            }
+                            .ma-item { text-align: center; flex: 1; border-right: 1px solid #fde047; }
+                            .ma-item:last-child { border-right: none; }
+                            .ma-label { font-size: 11px; margin-bottom: 3px; font-weight: 600; }
+                            .ma-value { font-size: 14px; font-weight: 700; }
+                            .legend-row {
+                                display: flex; align-items: center; gap: 15px; margin-bottom: 8px; padding: 6px 10px;
+                                background: #f8fafc; border-radius: 6px; font-size: 11px;
+                            }
+                            .legend-item { display: flex; align-items: center; gap: 4px; }
+                            .legend-box { width: 12px; height: 12px; border-radius: 2px; }
                             .up { color: #dc2626; }
                             .down { color: #16a34a; }
+                            .chart-section { margin-bottom: 6px; }
                             .chart-image {
-                                width: 100%; display: block; border: 1px solid #e5e7eb; margin-bottom: 5px;
+                                width: 100%; display: block; border: 1px solid #e5e7eb; border-radius: 4px;
                             }
-                            .footer { 
-                                display: flex; justify-content: space-between; margin-top: 15px;
-                                padding-top: 10px; border-top: 1px solid #eee; font-size: 11px; color: #94a3b8;
+                            .chart-label {
+                                font-size: 10px; color: #64748b; margin-bottom: 2px; font-weight: 500;
+                            }
+                            .footer {
+                                display: flex; justify-content: space-between; margin-top: 8px;
+                                padding-top: 6px; border-top: 1px solid #eee; font-size: 10px; color: #94a3b8;
                             }
                         </style>
                     </head>
@@ -160,40 +269,110 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
                                 <div class="title-group">
                                     <span class="symbol">${symbol}</span>
                                     <span class="name">${stockName}</span>
-                                    ${industry ? `<span style="font-size:14px; background:#eee; padding:2px 8px; border-radius:4px;">${industry}</span>` : ''}
+                                    ${industry ? `<span style="font-size:12px; background:#eee; padding:2px 6px; border-radius:4px;">${industry}</span>` : ''}
+                                    <span style="font-size:14px; background:#3b82f6; color:white; padding:3px 10px; border-radius:4px; font-weight:600;">${periodLabel}</span>
                                 </div>
-                                <div class="meta">列印日期：${new Date().toLocaleDateString('zh-TW')} ${new Date().toLocaleTimeString('zh-TW')}</div>
+                                <div class="meta">資料日期：${printData?.date || '-'}</div>
                             </div>
 
-                            ${latestPrice ? `
-                            <div class="price-grid">
-                                <div class="price-item">
-                                    <div class="price-label">收盤價</div>
-                                    <div class="price-value ${isUp ? 'up' : 'down'}">${latestPrice.close?.toFixed(2)}</div>
+                            <!-- 價格資訊 + 均線資訊 -->
+                            <div class="info-section">
+                                <div class="price-grid">
+                                    <div class="price-item">
+                                        <div class="price-label">開盤價</div>
+                                        <div class="price-value" style="color:#0f172a">${printData?.open?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="price-item">
+                                        <div class="price-label">收盤價</div>
+                                        <div class="price-value ${chartIsUp ? 'up' : 'down'}">${printData?.close?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="price-item">
+                                        <div class="price-label">最高價</div>
+                                        <div class="price-value up">${printData?.high?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="price-item">
+                                        <div class="price-label">最低價</div>
+                                        <div class="price-value down">${printData?.low?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="price-item">
+                                        <div class="price-label">漲跌幅</div>
+                                        <div class="price-value ${chartIsUp ? 'up' : 'down'}">${chartChangePct !== null ? (chartIsUp ? '+' : '') + chartChangePct.toFixed(2) + '%' : '-'}</div>
+                                    </div>
                                 </div>
-                                <div class="price-item">
-                                    <div class="price-label">漲跌</div>
-                                    <div class="price-value ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${latestPrice.change?.toFixed(2)}</div>
-                                </div>
-                                <div class="price-item">
-                                    <div class="price-label">漲跌幅</div>
-                                    <div class="price-value ${isUp ? 'up' : 'down'}">${isUp ? '+' : ''}${latestPrice.change_pct?.toFixed(2)}%</div>
-                                </div>
-                                <div class="price-item">
-                                    <div class="price-label">成交量</div>
-                                    <div class="price-value" style="color:#0f172a">${(latestPrice.volume || 0) > 10000 ? ((latestPrice.volume || 0) / 10000).toFixed(1) + '萬' : latestPrice.volume?.toLocaleString()}</div>
-                                </div>
-                                <div class="price-item">
-                                    <div class="price-label">成交金額</div>
-                                    <div class="price-value" style="color:#0f172a">${latestPrice.amount?.toFixed(2)}億</div>
+                                <div class="ma-grid">
+                                    <div class="ma-item">
+                                        <div class="ma-label" style="color:#ffc107">MA5</div>
+                                        <div class="ma-value" style="color:#b38600">${printData?.ma5?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="ma-item">
+                                        <div class="ma-label" style="color:#9c27b0">MA10</div>
+                                        <div class="ma-value" style="color:#7b1fa2">${printData?.ma10?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="ma-item">
+                                        <div class="ma-label" style="color:#2196f3">MA20</div>
+                                        <div class="ma-value" style="color:#1565c0">${printData?.ma20?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="ma-item">
+                                        <div class="ma-label" style="color:#ff9800">MA60</div>
+                                        <div class="ma-value" style="color:#e65100">${printData?.ma60?.toFixed(2) ?? '-'}</div>
+                                    </div>
+                                    <div class="ma-item">
+                                        <div class="ma-label" style="color:#9e9e9e">MA120</div>
+                                        <div class="ma-value" style="color:#616161">${printData?.ma120?.toFixed(2) ?? '-'}</div>
+                                    </div>
                                 </div>
                             </div>
-                            ` : ''}
 
-                            <!-- 組合圖表截圖 -->
-                            <img src="${images.main}" class="chart-image" style="height: 55%;" />
-                            <img src="${images.volume}" class="chart-image" style="height: 15%;" />
-                            <img src="${images.indicator}" class="chart-image" style="height: 25%;" />
+                            <!-- 圖例 -->
+                            <div class="legend-row">
+                                <div class="legend-item">
+                                    <div class="legend-box" style="background:#ef5350"></div>
+                                    <span>上漲</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-box" style="background:#26a69a"></div>
+                                    <span>下跌</span>
+                                </div>
+                                <div style="width:1px; height:12px; background:#cbd5e1; margin:0 5px;"></div>
+                                <div class="legend-item">
+                                    <div class="legend-box" style="background:#ffc107"></div>
+                                    <span>MA5</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-box" style="background:#9c27b0"></div>
+                                    <span>MA10</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-box" style="background:#2196f3"></div>
+                                    <span>MA20</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-box" style="background:#ff9800"></div>
+                                    <span>MA60</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-box" style="background:#9e9e9e"></div>
+                                    <span>MA120</span>
+                                </div>
+                            </div>
+
+                            <!-- K線主圖（最大） -->
+                            <div class="chart-section">
+                                <div class="chart-label">K線圖</div>
+                                <img src="${images.main}" class="chart-image" />
+                            </div>
+
+                            <!-- 成交量圖 -->
+                            <div class="chart-section">
+                                <div class="chart-label">成交量</div>
+                                <img src="${images.volume}" class="chart-image" />
+                            </div>
+
+                            <!-- 技術指標圖 -->
+                            <div class="chart-section">
+                                <div class="chart-label">技術指標</div>
+                                <img src="${images.indicator}" class="chart-image" />
+                            </div>
 
                             <div class="footer">
                                 <span>資料來源：TWSE / FinMind (貓星人賺大錢系統)</span>
@@ -216,7 +395,7 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
             console.error('列印失敗:', err);
             alert('列印準備失敗，請重試');
         }
-    }, [symbol, latestPrice, isUp, stockName, industry, dataRange, dataCount]);
+    }, [symbol, stockName, industry, dataRange, dataCount, klineData, isLocked, lockedData, crosshairData, period]);
 
     const handleForceRefresh = useCallback(() => {
         setForceRefresh(true);
@@ -227,14 +406,6 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
         setRetryCount(c => c + 1);
         refetch();
     }, [refetch]);
-
-    const enlargeChart = useCallback(() => {
-        setChartSize(s => s === 'normal' ? 'large' : s === 'large' ? 'xlarge' : 'xlarge');
-    }, []);
-
-    const shrinkChart = useCallback(() => {
-        setChartSize(s => s === 'xlarge' ? 'large' : s === 'large' ? 'normal' : 'normal');
-    }, []);
 
     useEffect(() => {
         if (forceRefresh) refetch();
@@ -252,7 +423,7 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
 
     return (
         <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-            <DialogContent className={`${chartHeights.dialogWidth} max-h-[95vh] overflow-y-auto`}>
+            <DialogContent className={`${chartHeights.dialogWidth} max-h-[95vh] overflow-y-auto transition-all duration-300 ease-in-out`}>
                 <DialogHeader className="no-print">
                     <DialogTitle className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <div className="flex items-center gap-3">
@@ -277,31 +448,6 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
                                 </SelectContent>
                             </Select>
 
-                            {/* 圖表縮放 */}
-                            <div className="flex items-center border rounded">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-r-none"
-                                    onClick={shrinkChart}
-                                    disabled={chartSize === 'normal'}
-                                    title="縮小圖表"
-                                >
-                                    <ZoomOut className="h-3.5 w-3.5" />
-                                </Button>
-                                <span className="text-xs px-1 border-x">{chartSize === 'normal' ? '1x' : chartSize === 'large' ? '2x' : '3x'}</span>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-l-none"
-                                    onClick={enlargeChart}
-                                    disabled={chartSize === 'xlarge'}
-                                    title="放大圖表"
-                                >
-                                    <ZoomIn className="h-3.5 w-3.5" />
-                                </Button>
-                            </div>
-
                             {/* 列印 */}
                             <Button
                                 variant="outline"
@@ -312,6 +458,18 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
                             >
                                 <Printer className="h-3.5 w-3.5 mr-1" />
                                 列印
+                            </Button>
+
+                            {/* 鎖定十字軸 */}
+                            <Button
+                                variant={isLocked ? "default" : "outline"}
+                                size="sm"
+                                onClick={toggleLock}
+                                className={`h-7 text-xs ${isLocked ? 'bg-amber-500 hover:bg-amber-600' : ''}`}
+                                disabled={isLoading || klineData.length === 0}
+                            >
+                                {isLocked ? <Lock className="h-3.5 w-3.5 mr-1" /> : <Unlock className="h-3.5 w-3.5 mr-1" />}
+                                {isLocked ? `已鎖定 ${lockedData?.date || ''}` : '鎖定'}
                             </Button>
 
                             {/* 刷新 */}
@@ -328,33 +486,31 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
                     </DialogTitle>
                 </DialogHeader>
 
-                {/* 報價資訊 */}
-                {latestPrice && (
+                {/* 報價資訊 (即時跟隨滑鼠) */}
+                {displayData && (
                     <div className="grid grid-cols-5 gap-2 p-2 bg-gradient-to-r from-slate-50 to-blue-50 dark:from-slate-800 dark:to-blue-900 rounded-lg text-sm mb-2">
                         <div className="text-center">
-                            <div className="text-[10px] text-muted-foreground">收盤</div>
-                            <div className={`text-base font-bold ${changeColor}`}>{latestPrice.close?.toFixed(2)}</div>
+                            <div className="text-[10px] text-muted-foreground">開盤價</div>
+                            <div className="text-base font-bold">{displayData.open?.toFixed(2) ?? '-'}</div>
                         </div>
                         <div className="text-center">
-                            <div className="text-[10px] text-muted-foreground">漲跌</div>
+                            <div className="text-[10px] text-muted-foreground">收盤價</div>
+                            <div className={`text-base font-bold ${changeColor}`}>{displayData.close?.toFixed(2) ?? '-'}</div>
+                        </div>
+                        <div className="text-center">
+                            <div className="text-[10px] text-muted-foreground">最高價</div>
+                            <div className="text-base font-bold text-red-500">{displayData.high?.toFixed(2) ?? '-'}</div>
+                        </div>
+                        <div className="text-center">
+                            <div className="text-[10px] text-muted-foreground">最低價</div>
+                            <div className="text-base font-bold text-green-600">{displayData.low?.toFixed(2) ?? '-'}</div>
+                        </div>
+                        <div className="text-center">
+                            <div className="text-[10px] text-muted-foreground">漲跌幅</div>
                             <div className={`text-base font-bold flex items-center justify-center ${changeColor}`}>
                                 <PriceIcon className="h-3 w-3 mr-0.5" />
-                                {isUp ? '+' : ''}{latestPrice.change?.toFixed(2)}
+                                {displayData.changePct != null ? `${isUp ? '+' : ''}${displayData.changePct.toFixed(2)}%` : '-'}
                             </div>
-                        </div>
-                        <div className="text-center">
-                            <div className="text-[10px] text-muted-foreground">幅度</div>
-                            <div className={`text-base font-bold ${changeColor}`}>{isUp ? '+' : ''}{latestPrice.change_pct?.toFixed(2)}%</div>
-                        </div>
-                        <div className="text-center">
-                            <div className="text-[10px] text-muted-foreground">量</div>
-                            <div className="text-base font-bold font-mono">
-                                {(latestPrice.volume || 0) > 10000 ? `${((latestPrice.volume || 0) / 10000).toFixed(0)}萬` : latestPrice.volume?.toLocaleString()}
-                            </div>
-                        </div>
-                        <div className="text-center">
-                            <div className="text-[10px] text-muted-foreground">金額</div>
-                            <div className="text-base font-bold">{latestPrice.amount?.toFixed(1)}億</div>
                         </div>
                     </div>
                 )}
@@ -399,6 +555,12 @@ export function StockAnalysisDialog({ open, onClose, symbol, name }: StockAnalys
                             symbol={symbol || ''}
                             isLoading={isFetching}
                             chartHeights={chartHeights}
+                            onCrosshairMove={handleCrosshairMove}
+                            onChartClick={(data) => {
+                                // 點擊 K 線時自動鎖定
+                                setIsLocked(true);
+                                setLockedData(data);
+                            }}
                         />
                     )}
 

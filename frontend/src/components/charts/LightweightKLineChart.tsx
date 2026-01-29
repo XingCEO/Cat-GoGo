@@ -12,6 +12,7 @@ import {
     type CandlestickData,
     type LineData,
     type Time,
+    type MouseEventParams,
 } from 'lightweight-charts';
 import type { KLineDataPoint } from '@/types';
 
@@ -23,12 +24,29 @@ interface VisibleMAs {
     ma120?: boolean;
 }
 
+// Crosshair 移動時的數據
+export interface CrosshairData {
+    date: string;
+    open: number | null;
+    high: number | null;
+    low: number | null;
+    close: number | null;
+    volume: number;
+    ma5?: number | null;
+    ma10?: number | null;
+    ma20?: number | null;
+    ma60?: number | null;
+    ma120?: number | null;
+}
+
 interface LightweightKLineChartProps {
     data: KLineDataPoint[];
     height?: number;
     showBollinger?: boolean;
     visibleMAs?: VisibleMAs;
-    onChartReady?: (chart: IChartApi) => void;
+    onChartReady?: (chart: IChartApi, mainSeries: ISeriesApi<'Candlestick'>) => void;  // 同時傳遞 chart 和 mainSeries
+    onCrosshairMove?: (data: CrosshairData | null) => void;
+    onChartClick?: (data: CrosshairData) => void;  // 點擊事件
 }
 
 // 顏色定義
@@ -75,9 +93,12 @@ export function LightweightKLineChart({
     showBollinger = false,
     visibleMAs = { ma5: true, ma10: true, ma20: true, ma60: true, ma120: false },
     onChartReady,
+    onCrosshairMove,
+    onChartClick,
 }: LightweightKLineChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
+    const dataRef = useRef<KLineDataPoint[]>(data);
     const seriesRefs = useRef<{
         candlestick?: ISeriesApi<'Candlestick'>;
         ma5?: ISeriesApi<'Line'>;
@@ -164,36 +185,41 @@ export function LightweightKLineChart({
         });
         seriesRefs.current.candlestick = candlestickSeries;
 
-        // 創建均線序列
+        // 創建均線序列（不在 Y 軸上顯示標籤，圖例在上方控制列）
         seriesRefs.current.ma5 = chart.addLineSeries({
             color: MA_COLORS.ma5,
             lineWidth: 1,
-            title: 'MA5',
             visible: visibleMAs.ma5 !== false,
+            lastValueVisible: false,
+            priceLineVisible: false,
         });
         seriesRefs.current.ma10 = chart.addLineSeries({
             color: MA_COLORS.ma10,
             lineWidth: 1,
-            title: 'MA10',
             visible: visibleMAs.ma10 !== false,
+            lastValueVisible: false,
+            priceLineVisible: false,
         });
         seriesRefs.current.ma20 = chart.addLineSeries({
             color: MA_COLORS.ma20,
             lineWidth: 1,
-            title: 'MA20',
             visible: visibleMAs.ma20 !== false,
+            lastValueVisible: false,
+            priceLineVisible: false,
         });
         seriesRefs.current.ma60 = chart.addLineSeries({
             color: MA_COLORS.ma60,
             lineWidth: 1,
-            title: 'MA60',
             visible: visibleMAs.ma60 !== false,
+            lastValueVisible: false,
+            priceLineVisible: false,
         });
         seriesRefs.current.ma120 = chart.addLineSeries({
             color: MA_COLORS.ma120,
             lineWidth: 1,
-            title: 'MA120',
             visible: visibleMAs.ma120 === true,  // 預設關閉
+            lastValueVisible: false,
+            priceLineVisible: false,
         });
 
         // 創建布林通道序列
@@ -226,8 +252,57 @@ export function LightweightKLineChart({
         });
         resizeObserver.observe(containerRef.current);
 
+        // 監聽 crosshair 移動事件
+        if (onCrosshairMove) {
+            chart.subscribeCrosshairMove((param: MouseEventParams) => {
+                if (!param.time || !param.point) {
+                    onCrosshairMove(null);
+                    return;
+                }
+                const timeStr = param.time as string;
+                const dataPoint = dataRef.current.find(d => d.date === timeStr);
+                if (dataPoint) {
+                    onCrosshairMove({
+                        date: dataPoint.date,
+                        open: dataPoint.open,
+                        high: dataPoint.high,
+                        low: dataPoint.low,
+                        close: dataPoint.close,
+                        volume: dataPoint.volume,
+                        ma5: dataPoint.ma5,
+                        ma10: dataPoint.ma10,
+                        ma20: dataPoint.ma20,
+                        ma60: dataPoint.ma60,
+                        ma120: dataPoint.ma120,
+                    });
+                }
+            });
+        }
+
+        // 監聽點擊事件 - 點擊時鎖定該日期
+        chart.subscribeClick((param: MouseEventParams) => {
+            if (!param.time || !param.point) return;
+            const timeStr = param.time as string;
+            const dataPoint = dataRef.current.find(d => d.date === timeStr);
+            if (dataPoint && onChartClick) {
+                onChartClick({
+                    date: dataPoint.date,
+                    open: dataPoint.open,
+                    high: dataPoint.high,
+                    low: dataPoint.low,
+                    close: dataPoint.close,
+                    volume: dataPoint.volume,
+                    ma5: dataPoint.ma5,
+                    ma10: dataPoint.ma10,
+                    ma20: dataPoint.ma20,
+                    ma60: dataPoint.ma60,
+                    ma120: dataPoint.ma120,
+                });
+            }
+        });
+
         if (onChartReady) {
-            onChartReady(chart);
+            onChartReady(chart, candlestickSeries);
         }
 
         return () => {
@@ -237,16 +312,21 @@ export function LightweightKLineChart({
         };
     }, []);
 
-    // 監聽 height 改變（作為備援，通常 ResizeObserver 會處理）
+    // 監聽 height 改變，手動更新圖表高度
     useEffect(() => {
         if (!chartRef.current || !containerRef.current) return;
-        // 我們不直接 resize，而是確認 container 高度已更新
-        // 因為 ResizeObserver 會自動捕捉到 height 變化
+        chartRef.current.applyOptions({
+            width: containerRef.current.clientWidth,
+            height: height
+        });
     }, [height]);
 
     // 更新資料
     useEffect(() => {
         if (!chartRef.current || !data || data.length === 0) return;
+
+        // 更新 dataRef 供 crosshair 事件使用
+        dataRef.current = data;
 
         const series = seriesRefs.current;
 

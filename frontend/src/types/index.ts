@@ -46,6 +46,9 @@ export interface FilterParams {
     volume_max?: number;
     price_min?: number;
     price_max?: number;
+    // 收盤價相對昨收的漲幅篩選
+    close_above_prev_min?: number;
+    close_above_prev_max?: number;
     consecutive_up_min?: number;
     consecutive_up_max?: number;
     amplitude_min?: number;

@@ -1,16 +1,17 @@
 /**
  * 互動式圖表容器 - 升級版
- * 支援 5 年歷史資料、時間範圍選擇、鍵盤快捷鍵、均線開關
+ * 支援 5 年歷史資料、時間範圍選擇、鍵盤快捷鍵、均線開關、繪圖工具
  */
 import { useState, useRef, useCallback, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
-import type { IChartApi, LogicalRange } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, LogicalRange } from 'lightweight-charts';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { LightweightKLineChart } from './LightweightKLineChart';
+import { LightweightKLineChart, type CrosshairData } from './LightweightKLineChart';
 import { LightweightVolumeChart } from './LightweightVolumeChart';
 import { LightweightMACDChart } from './LightweightMACDChart';
 import { LightweightKDChart } from './LightweightKDChart';
 import { LightweightRSIChart } from './LightweightRSIChart';
+import { DrawingToolbar, DrawingCanvas, useDrawings } from './DrawingTools';
 import type { KLineDataPoint } from '@/types';
 import { useChartStore, TIME_RANGE_OPTIONS } from '@/stores/chartStore';
 import {
@@ -33,6 +34,8 @@ interface InteractiveChartContainerProps {
     chartHeights?: ChartHeights;  // 動態圖表高度（全螢幕時使用）
     onLoadMore?: (startDate: string, endDate: string) => void;
     onRangeChange?: (startDate: string, endDate: string) => void;
+    onCrosshairMove?: (data: CrosshairData | null) => void;  // 傳遞即時數據給父組件
+    onChartClick?: (data: CrosshairData) => void;  // 點擊事件
 }
 
 
@@ -45,7 +48,7 @@ const DEFAULT_HEIGHTS: ChartHeights = {
 
 // Export Ref type
 export interface InteractiveChartContainerRef {
-    captureCharts: () => Promise<{ main: string; volume: string; indicator: string }>;
+    captureCharts: (endDate?: string) => Promise<{ main: string; volume: string; indicator: string }>;
 }
 
 export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef, InteractiveChartContainerProps>(({
@@ -56,11 +59,54 @@ export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef
     chartHeights = DEFAULT_HEIGHTS,
     onLoadMore: _onLoadMore,
     onRangeChange,
+    onCrosshairMove,
+    onChartClick,
 }, ref) => {
     // ... existing state ...
     const [visibleRange, setVisibleRange] = useState<{ from: string; to: string } | null>(null);
     const [indicatorTab, setIndicatorTab] = useState('macd');
     const [activeTimeRange, setActiveTimeRange] = useState('3m');
+    // Crosshair 即時數據
+    const [crosshairData, setCrosshairData] = useState<CrosshairData | null>(null);
+
+    // 繪圖工具
+    const {
+        drawings,
+        activeType: drawingType,
+        setActiveType: setDrawingType,
+        selectedId: drawingSelectedId,
+        setSelectedId: setDrawingSelectedId,
+        addDrawing,
+        deleteDrawing,
+    } = useDrawings();
+
+    // 主圖表容器尺寸（用於繪圖畫布）
+    const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
+    const mainChartContainerRef = useRef<HTMLDivElement>(null);
+
+    // 監聽主圖表容器尺寸變化
+    useEffect(() => {
+        if (!mainChartContainerRef.current) return;
+        const resizeObserver = new ResizeObserver(entries => {
+            const entry = entries[0];
+            if (entry) {
+                setChartDimensions({
+                    width: entry.contentRect.width,
+                    height: entry.contentRect.height,
+                });
+            }
+        });
+        resizeObserver.observe(mainChartContainerRef.current);
+        return () => resizeObserver.disconnect();
+    }, []);
+
+    // 處理 crosshair 移動，同時更新本地狀態和傳遞給父組件
+    const handleCrosshairMove = useCallback((data: CrosshairData | null) => {
+        setCrosshairData(data);
+        if (onCrosshairMove) {
+            onCrosshairMove(data);
+        }
+    }, [onCrosshairMove]);
 
     // ... existing store hooks ...
     const {
@@ -74,23 +120,73 @@ export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef
 
     // Refs
     const mainChartRef = useRef<IChartApi | null>(null);
+    const mainSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);  // 主K線序列引用
     const volumeChartRef = useRef<IChartApi | null>(null);
     const indicatorChartRef = useRef<IChartApi | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Expose capture method
+    // 用於繪圖的 state（需要觸發重新渲染）
+    const [chartReady, setChartReady] = useState<{
+        chart: IChartApi | null;
+        series: ISeriesApi<'Candlestick'> | null;
+    }>({ chart: null, series: null });
+
+    // Expose capture method - 支援截斷到指定日期
     useImperativeHandle(ref, () => ({
-        captureCharts: async () => {
+        captureCharts: async (endDate?: string) => {
+            const charts = [mainChartRef.current, volumeChartRef.current, indicatorChartRef.current];
+
+            // 如果有指定結束日期，先調整圖表範圍
+            let originalRange: { from: number; to: number } | null = null;
+            if (endDate && mainChartRef.current && data.length > 0) {
+                // 找到結束日期的索引
+                const endIdx = data.findIndex(d => d.date === endDate);
+                if (endIdx >= 0) {
+                    // 保存原始範圍
+                    const currentRange = mainChartRef.current.timeScale().getVisibleLogicalRange();
+                    if (currentRange) {
+                        originalRange = { from: currentRange.from, to: currentRange.to };
+                    }
+
+                    // 設定新範圍：精準截止到選中日期
+                    const visibleWidth = originalRange ? originalRange.to - originalRange.from : 60;
+                    const newFrom = Math.max(0, endIdx - visibleWidth + 5);
+                    const newTo = endIdx;  // 精準截止
+
+                    // 同步所有圖表到新範圍
+                    charts.forEach(chart => {
+                        if (chart) {
+                            chart.timeScale().setVisibleLogicalRange({ from: newFrom, to: newTo });
+                        }
+                    });
+
+                    // 等待圖表重繪
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                }
+            }
+
             const getCanvas = (chart: IChartApi | null) => {
                 if (!chart) return null;
                 return chart.takeScreenshot().toDataURL('image/png');
             };
 
-            return {
+            const result = {
                 main: getCanvas(mainChartRef.current) || '',
                 volume: getCanvas(volumeChartRef.current) || '',
                 indicator: getCanvas(indicatorChartRef.current) || '',
             };
+
+            // 還原原始範圍
+            if (originalRange) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+                charts.forEach(chart => {
+                    if (chart) {
+                        chart.timeScale().setVisibleLogicalRange(originalRange!);
+                    }
+                });
+            }
+
+            return result;
         }
     }));
 
@@ -127,8 +223,12 @@ export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef
     }, []);
 
     // 設定主圖表引用並建立同步
-    const handleMainChartReady = useCallback((chart: IChartApi) => {
+    const handleMainChartReady = useCallback((chart: IChartApi, mainSeries: ISeriesApi<'Candlestick'>) => {
         mainChartRef.current = chart;
+        mainSeriesRef.current = mainSeries;  // 儲存主K線序列引用
+
+        // 設定 state 以觸發 DrawingCanvas 重新渲染
+        setChartReady({ chart, series: mainSeries });
 
         // 監聽可見範圍變化
         chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -438,6 +538,13 @@ export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={resetView} title="R: 重置">
                         <RotateCcw className="h-4 w-4" />
                     </Button>
+                    <div className="w-px h-4 bg-border mx-1" />
+                    {/* 繪圖工具 */}
+                    <DrawingToolbar
+                        activeType={drawingType}
+                        onTypeChange={setDrawingType}
+                        drawingCount={drawings.length}
+                    />
                 </div>
 
                 {/* 日期範圍顯示 */}
@@ -455,52 +562,77 @@ export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef
                 <span><span className="inline-block w-3 h-3 mr-1" style={{ backgroundColor: '#26a69a' }}></span> 下跌</span>
                 <div className="w-px h-4 bg-border mx-1" />
 
-                {/* 均線開關按鈕 */}
-                <Button
-                    variant={showMA5 ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-5 px-1.5 text-xs"
-                    style={{ backgroundColor: showMA5 ? '#ffc107' : undefined, color: showMA5 ? 'black' : '#ffc107' }}
-                    onClick={() => toggleIndicator('showMA5')}
-                >
-                    MA5
-                </Button>
-                <Button
-                    variant={showMA10 ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-5 px-1.5 text-xs"
-                    style={{ backgroundColor: showMA10 ? '#9c27b0' : undefined, color: showMA10 ? 'white' : '#9c27b0' }}
-                    onClick={() => toggleIndicator('showMA10')}
-                >
-                    MA10
-                </Button>
-                <Button
-                    variant={showMA20 ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-5 px-1.5 text-xs"
-                    style={{ backgroundColor: showMA20 ? '#2196f3' : undefined, color: showMA20 ? 'white' : '#2196f3' }}
-                    onClick={() => toggleIndicator('showMA20')}
-                >
-                    MA20
-                </Button>
-                <Button
-                    variant={showMA60 ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-5 px-1.5 text-xs"
-                    style={{ backgroundColor: showMA60 ? '#ff9800' : undefined, color: showMA60 ? 'black' : '#ff9800' }}
-                    onClick={() => toggleIndicator('showMA60')}
-                >
-                    MA60
-                </Button>
-                <Button
-                    variant={showMA120 ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-5 px-1.5 text-xs"
-                    style={{ backgroundColor: showMA120 ? '#9e9e9e' : undefined, color: showMA120 ? 'black' : '#9e9e9e' }}
-                    onClick={() => toggleIndicator('showMA120')}
-                >
-                    MA120
-                </Button>
+                {/* 均線開關按鈕 + 數值 (即時跟隨滑鼠) */}
+                <div className="flex items-center gap-0.5">
+                    <Button
+                        variant={showMA5 ? 'default' : 'ghost'}
+                        size="sm"
+                        className="h-5 px-1.5 text-xs"
+                        style={{ backgroundColor: showMA5 ? '#ffc107' : undefined, color: showMA5 ? 'black' : '#ffc107' }}
+                        onClick={() => toggleIndicator('showMA5')}
+                    >
+                        MA5
+                    </Button>
+                    {showMA5 && (crosshairData?.ma5 ?? data[data.length - 1]?.ma5) && (
+                        <span className="font-mono" style={{ color: '#ffc107' }}>{(crosshairData?.ma5 ?? data[data.length - 1]?.ma5)?.toFixed(2)}</span>
+                    )}
+                </div>
+                <div className="flex items-center gap-0.5">
+                    <Button
+                        variant={showMA10 ? 'default' : 'ghost'}
+                        size="sm"
+                        className="h-5 px-1.5 text-xs"
+                        style={{ backgroundColor: showMA10 ? '#9c27b0' : undefined, color: showMA10 ? 'white' : '#9c27b0' }}
+                        onClick={() => toggleIndicator('showMA10')}
+                    >
+                        MA10
+                    </Button>
+                    {showMA10 && (crosshairData?.ma10 ?? data[data.length - 1]?.ma10) && (
+                        <span className="font-mono" style={{ color: '#9c27b0' }}>{(crosshairData?.ma10 ?? data[data.length - 1]?.ma10)?.toFixed(2)}</span>
+                    )}
+                </div>
+                <div className="flex items-center gap-0.5">
+                    <Button
+                        variant={showMA20 ? 'default' : 'ghost'}
+                        size="sm"
+                        className="h-5 px-1.5 text-xs"
+                        style={{ backgroundColor: showMA20 ? '#2196f3' : undefined, color: showMA20 ? 'white' : '#2196f3' }}
+                        onClick={() => toggleIndicator('showMA20')}
+                    >
+                        MA20
+                    </Button>
+                    {showMA20 && (crosshairData?.ma20 ?? data[data.length - 1]?.ma20) && (
+                        <span className="font-mono" style={{ color: '#2196f3' }}>{(crosshairData?.ma20 ?? data[data.length - 1]?.ma20)?.toFixed(2)}</span>
+                    )}
+                </div>
+                <div className="flex items-center gap-0.5">
+                    <Button
+                        variant={showMA60 ? 'default' : 'ghost'}
+                        size="sm"
+                        className="h-5 px-1.5 text-xs"
+                        style={{ backgroundColor: showMA60 ? '#ff9800' : undefined, color: showMA60 ? 'black' : '#ff9800' }}
+                        onClick={() => toggleIndicator('showMA60')}
+                    >
+                        MA60
+                    </Button>
+                    {showMA60 && (crosshairData?.ma60 ?? data[data.length - 1]?.ma60) && (
+                        <span className="font-mono" style={{ color: '#ff9800' }}>{(crosshairData?.ma60 ?? data[data.length - 1]?.ma60)?.toFixed(2)}</span>
+                    )}
+                </div>
+                <div className="flex items-center gap-0.5">
+                    <Button
+                        variant={showMA120 ? 'default' : 'ghost'}
+                        size="sm"
+                        className="h-5 px-1.5 text-xs"
+                        style={{ backgroundColor: showMA120 ? '#9e9e9e' : undefined, color: showMA120 ? 'black' : '#9e9e9e' }}
+                        onClick={() => toggleIndicator('showMA120')}
+                    >
+                        MA120
+                    </Button>
+                    {showMA120 && (crosshairData?.ma120 ?? data[data.length - 1]?.ma120) && (
+                        <span className="font-mono" style={{ color: '#9e9e9e' }}>{(crosshairData?.ma120 ?? data[data.length - 1]?.ma120)?.toFixed(2)}</span>
+                    )}
+                </div>
 
                 {showBollinger && (
                     <>
@@ -512,7 +644,7 @@ export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef
             </div>
 
             {/* K 線主圖 */}
-            <div className="border rounded-lg overflow-hidden relative">
+            <div ref={mainChartContainerRef} className="border rounded-lg overflow-hidden relative transition-all duration-300 ease-in-out" style={{ height: chartHeights.main }}>
                 {isLoading && (
                     <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10">
                         <Loader2 className="h-6 w-6 animate-spin" />
@@ -524,11 +656,28 @@ export const InteractiveChartContainer = forwardRef<InteractiveChartContainerRef
                     showBollinger={showBollinger}
                     visibleMAs={visibleMAs}
                     onChartReady={handleMainChartReady}
+                    onCrosshairMove={handleCrosshairMove}
+                    onChartClick={onChartClick}
                 />
+                {/* 繪圖畫布層 */}
+                {chartDimensions.width > 0 && (
+                    <DrawingCanvas
+                        width={chartDimensions.width}
+                        height={chartDimensions.height}
+                        drawings={drawings}
+                        activeType={drawingType}
+                        selectedId={drawingSelectedId}
+                        onAddDrawing={addDrawing}
+                        onSelectDrawing={setDrawingSelectedId}
+                        onDeleteDrawing={deleteDrawing}
+                        chart={chartReady.chart}
+                        mainSeries={chartReady.series}
+                    />
+                )}
             </div>
 
             {/* 成交量副圖 */}
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-lg overflow-hidden transition-all duration-300 ease-in-out" style={{ height: chartHeights.volume + 28 }}>
                 <div className="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground border-b">
                     <span>成交量</span>
                     <span className="ml-2">

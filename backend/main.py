@@ -1,9 +1,12 @@
 """
 TWSE Stock Filter API - Main Application
 """
+import os
+import sys
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import logging
 
@@ -23,16 +26,38 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# Find frontend directory - check multiple locations
+FRONTEND_DIR = None
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CWD = os.getcwd()
+
+FRONTEND_PATHS = [
+    os.path.join(CWD, "..", "frontend", "dist"),           # portable: from backend/, ../frontend/dist
+    os.path.join(CWD, "frontend", "dist"),                  # if cwd is project root
+    os.path.join(BASE_DIR, "..", "frontend", "dist"),       # dev: relative to main.py
+    os.path.join(BASE_DIR, "..", "..", "frontend", "dist"), # another dev layout
+]
+
+for path in FRONTEND_PATHS:
+    abs_path = os.path.abspath(path)
+    index_file = os.path.join(abs_path, "index.html")
+    if os.path.isfile(index_file):
+        FRONTEND_DIR = abs_path
+        break
+
+if FRONTEND_DIR:
+    logger.info(f"✓ Frontend found: {FRONTEND_DIR}")
+else:
+    logger.warning("✗ Frontend not found - API only mode")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
-    # Startup
-    logger.info("Starting TWSE Stock Filter API...")
+    logger.info("Starting Meow Money Maker...")
     await init_db()
     logger.info("Database initialized")
     yield
-    # Shutdown
     logger.info("Shutting down...")
     await close_db()
 
@@ -41,7 +66,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="台股漲幅區間篩選器 API - 提供股票篩選、技術分析、回測等功能",
+    description="台股漲幅區間篩選器",
     lifespan=lifespan
 )
 
@@ -60,13 +85,17 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    if settings.debug:
+        error_message = str(exc)
+    else:
+        error_message = "伺服器內部錯誤，請稍後再試"
     return JSONResponse(
         status_code=500,
-        content={"success": False, "error": str(exc)}
+        content={"success": False, "error": error_message}
     )
 
 
-# Include routers
+# ============ API ROUTES (must be before static files) ============
 app.include_router(stocks_router)
 app.include_router(analysis_router)
 app.include_router(backtest_router)
@@ -76,58 +105,62 @@ app.include_router(export_router)
 app.include_router(turnover_router)
 
 
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "name": settings.app_name,
-        "version": settings.app_version,
-        "status": "running"
-    }
+@app.get("/api/status")
+async def api_status():
+    return {"name": settings.app_name, "version": settings.app_version, "status": "running"}
 
 
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
     return {"status": "healthy"}
 
 
 @app.get("/api/cache/clear")
 async def clear_cache():
-    """
-    Manual cache clearing endpoint
-    Clears all cached data to force fresh data fetching
-    """
     from services.cache_manager import cache_manager
-    
     stats_before = cache_manager.get_stats()
     cache_manager.clear()
-    stats_after = cache_manager.get_stats()
-    
-    logger.info("Cache cleared via API")
-    return {
-        "success": True,
-        "message": "快取已清除",
-        "stats_before": stats_before,
-        "stats_after": stats_after
-    }
+    return {"success": True, "message": "快取已清除", "stats_before": stats_before}
 
 
 @app.get("/api/cache/stats")
 async def cache_stats():
-    """Get current cache statistics"""
     from services.cache_manager import cache_manager
-    return {
-        "success": True,
-        "data": cache_manager.get_stats()
-    }
+    return {"success": True, "data": cache_manager.get_stats()}
+
+
+# ============ FRONTEND STATIC FILES ============
+if FRONTEND_DIR:
+    # Mount assets folder
+    assets_dir = os.path.join(FRONTEND_DIR, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        logger.info(f"✓ Assets mounted: {assets_dir}")
+
+    # Read index.html content once at startup
+    INDEX_HTML_PATH = os.path.join(FRONTEND_DIR, "index.html")
+
+    @app.get("/", response_class=HTMLResponse)
+    async def serve_root():
+        """Serve frontend index.html"""
+        return FileResponse(INDEX_HTML_PATH, media_type="text/html")
+
+    @app.get("/{path:path}")
+    async def serve_frontend(path: str):
+        """Serve frontend files or fallback to index.html for SPA"""
+        # Skip API paths
+        if path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"error": "Not found"})
+
+        # Try to serve exact file
+        file_path = os.path.join(FRONTEND_DIR, path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+
+        # Fallback to index.html for SPA routing
+        return FileResponse(INDEX_HTML_PATH, media_type="text/html")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=settings.debug
-    )
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=settings.debug)

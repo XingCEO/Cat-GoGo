@@ -95,6 +95,19 @@ export function FilterPanel({ onSearch, isLoading, queryDate, onDateChange }: Fi
                 {showAdvanced && (
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mt-4 pt-4 border-t">
                         <div className="space-y-2">
+                            <Label>收盤價高於昨收 (%)</Label>
+                            <div className="flex gap-2 items-center">
+                                <Input type="number" step="0.1" placeholder="最低"
+                                    value={filterParams.close_above_prev_min ?? ''}
+                                    onChange={(e) => setFilterParams({ close_above_prev_min: e.target.value ? parseFloat(e.target.value) : undefined })} />
+                                <span>~</span>
+                                <Input type="number" step="0.1" placeholder="最高"
+                                    value={filterParams.close_above_prev_max ?? ''}
+                                    onChange={(e) => setFilterParams({ close_above_prev_max: e.target.value ? parseFloat(e.target.value) : undefined })} />
+                                <span className="text-muted-foreground text-sm">%</span>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
                             <Label>連續上漲天數 (最少)</Label>
                             <Input type="number" value={filterParams.consecutive_up_min || ''}
                                 onChange={(e) => setFilterParams({ consecutive_up_min: e.target.value ? parseInt(e.target.value) : undefined })} />
@@ -141,7 +154,7 @@ export function FilterPanel({ onSearch, isLoading, queryDate, onDateChange }: Fi
                         <Star className="w-4 h-4 mr-2" /> 儲存條件
                     </Button>
                     <Button variant="outline" asChild>
-                        <a href={`http://localhost:8000/api/export/csv?date=${queryDate}&change_min=${filterParams.change_min}&change_max=${filterParams.change_max}&volume_min=${filterParams.volume_min || 0}${filterParams.volume_max ? `&volume_max=${filterParams.volume_max}` : ''}`} target="_blank">
+                        <a href={`/api/export/csv?date=${queryDate}&change_min=${filterParams.change_min ?? ''}&change_max=${filterParams.change_max ?? ''}&volume_min=${filterParams.volume_min || 0}${filterParams.volume_max ? `&volume_max=${filterParams.volume_max}` : ''}`} target="_blank">
                             <Download className="w-4 h-4 mr-2" /> 匯出CSV
                         </a>
                     </Button>

@@ -146,7 +146,17 @@ class StockFilter:
                 df = df[df[price_col] >= params.price_min]
             if params.price_max is not None:
                 df = df[df[price_col] <= params.price_max]
-        
+
+        # Filter: 收盤價相對昨收的漲幅 (close_above_prev)
+        if params.close_above_prev_min is not None or params.close_above_prev_max is not None:
+            if "spread" in df.columns and "close" in df.columns:
+                prev_close = df["close"] - df["spread"]
+                df["close_above_prev_pct"] = (df["close"] - prev_close) / prev_close * 100
+                if params.close_above_prev_min is not None:
+                    df = df[df["close_above_prev_pct"] >= params.close_above_prev_min]
+                if params.close_above_prev_max is not None:
+                    df = df[df["close_above_prev_pct"] <= params.close_above_prev_max]
+
         # Filter: Industry
         if params.industries and len(params.industries) > 0:
             if "industry_category" in df.columns:

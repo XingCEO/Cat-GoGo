@@ -11,25 +11,29 @@ class FilterRequest(BaseModel):
     # Date range for batch operations
     start_date: Optional[str] = Field(None, description="開始日期")
     end_date: Optional[str] = Field(None, description="結束日期")
-    
+
     # Change percent range
     change_min: float = Field(2.0, description="漲幅下限(%)")
     change_max: float = Field(3.0, description="漲幅上限(%)")
-    
+
     # Volume filter (in lots/張)
     volume_min: int = Field(500, description="最小成交量(張)")
     volume_max: Optional[int] = Field(None, description="最大成交量(張)")
-    
+
     # Price range
     price_min: Optional[float] = Field(None, description="最低股價")
     price_max: Optional[float] = Field(None, description="最高股價")
-    
+
+    # 收盤價相對昨收的漲幅篩選
+    close_above_prev_min: Optional[float] = Field(None, description="收盤價高於昨收最低(%)")
+    close_above_prev_max: Optional[float] = Field(None, description="收盤價高於昨收最高(%)")
+
     # Consecutive up days
     consecutive_up_min: Optional[int] = Field(None, description="最少連續上漲天數")
-    
+
     # Industries
     industries: Optional[List[str]] = Field(None, description="產業類別")
-    
+
     # ETF exclusion
     exclude_etf: bool = Field(True, description="排除ETF")
 

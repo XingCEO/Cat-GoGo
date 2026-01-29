@@ -60,41 +60,45 @@ class StockFilterParams(BaseModel):
     """Stock filter query parameters"""
     # Date
     date: Optional[str] = Field(None, description="查詢日期 YYYY-MM-DD")
-    
+
     # Change percent range
     change_min: Optional[float] = Field(2.0, description="漲幅下限(%)")
     change_max: Optional[float] = Field(3.0, description="漲幅上限(%)")
-    
+
     # Volume filter (in lots/張)
     volume_min: Optional[int] = Field(500, description="最小成交量(張)")
     volume_max: Optional[int] = Field(None, description="最大成交量(張)")
-    
+
     # Price range
     price_min: Optional[float] = Field(None, description="最低股價")
     price_max: Optional[float] = Field(None, description="最高股價")
-    
+
+    # 收盤價相對昨收的漲幅篩選
+    close_above_prev_min: Optional[float] = Field(None, description="收盤價高於昨收最低(%)")
+    close_above_prev_max: Optional[float] = Field(None, description="收盤價高於昨收最高(%)")
+
     # Consecutive up days
     consecutive_up_min: Optional[int] = Field(None, description="最少連續上漲天數")
     consecutive_up_max: Optional[int] = Field(None, description="最多連續上漲天數")
-    
+
     # Amplitude
     amplitude_min: Optional[float] = Field(None, description="振幅下限(%)")
     amplitude_max: Optional[float] = Field(None, description="振幅上限(%)")
-    
+
     # Volume ratio
     volume_ratio_min: Optional[float] = Field(None, description="量比下限")
     volume_ratio_max: Optional[float] = Field(None, description="量比上限")
-    
+
     # Industry filter
     industries: Optional[List[str]] = Field(None, description="產業類別(多選)")
-    
+
     # ETF exclusion
     exclude_etf: bool = Field(True, description="排除ETF")
-    
+
     # Pagination
     page: int = Field(1, ge=1)
     page_size: int = Field(50, ge=1, le=200)
-    
+
     # Sort
     sort_by: str = Field("change_percent", description="排序欄位")
     sort_order: str = Field("desc", description="排序方向 asc/desc")

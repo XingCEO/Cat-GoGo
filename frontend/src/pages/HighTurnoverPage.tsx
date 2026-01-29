@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { TurnoverCharts } from '@/components/TurnoverCharts';
 import { StockAnalysisDialog } from '@/components/StockAnalysisDialog';
 import { formatPercent, formatNumber, formatPrice, getChangeColor } from '@/utils/format';
-import { getHighTurnoverLimitUp, getTop20Turnover } from '@/services/api';
+import { getHighTurnoverLimitUp, getTop20Turnover, getTradingDate } from '@/services/api';
+import { useStore } from '@/store/store';
 import {
     Activity, Flame, Award, Filter,
     ChevronLeft, Zap, BarChart2, LineChart
@@ -47,7 +48,7 @@ interface TurnoverStats {
 }
 
 export function HighTurnoverPage() {
-    const [queryDate, setQueryDate] = useState('');
+    const { queryDate, setQueryDate } = useStore();
     const [showFilters, setShowFilters] = useState(false);
     const [viewMode, setViewMode] = useState<'limit_up' | 'top20'>('limit_up');
     const [filters, setFilters] = useState({
@@ -86,19 +87,15 @@ export function HighTurnoverPage() {
     // 取得最新交易日
     const { data: tradingDateData } = useQuery({
         queryKey: ['tradingDate'],
-        queryFn: async () => {
-            const response = await fetch('/api/trading-date');
-            const result = await response.json();
-            return result.data;
-        },
+        queryFn: getTradingDate,
     });
 
-    // 設定預設日期 - 使用 API 回傳的最新交易日
+    // 只有當全局日期為空時才設定初始值
     useEffect(() => {
         if (tradingDateData?.latest_trading_day && !queryDate) {
             setQueryDate(tradingDateData.latest_trading_day);
         }
-    }, [tradingDateData, queryDate]);
+    }, [tradingDateData, queryDate, setQueryDate]);
 
     const stats: TurnoverStats | undefined = limitUpData?.stats;
     const stocks: TurnoverStock[] = viewMode === 'limit_up'

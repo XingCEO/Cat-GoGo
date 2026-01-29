@@ -53,7 +53,67 @@
   * {
     @apply border-border;
   }
+
+  html {
+    /* 防止內容被擠壓，設定最小寬度 */
+    min-width: 320px;
+    overflow-x: auto;
+  }
+
   body {
     @apply bg-background text-foreground;
+    /* 確保 body 可以正確縮放 */
+    min-height: 100vh;
+    min-height: 100dvh; /* 動態視窗高度，支援行動裝置 */
+  }
+}
+
+/* 響應式容器 - 確保內容不會被擠壓 */
+@layer components {
+  .responsive-container {
+    @apply w-full max-w-full;
+    min-width: 0; /* 允許 flex 子元素縮小 */
+  }
+
+  /* 表格響應式包裝 */
+  .table-responsive {
+    @apply w-full overflow-x-auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 卡片網格響應式 */
+  .card-grid {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  }
+
+  /* 彈性按鈕組 */
+  .button-group {
+    @apply flex flex-wrap gap-1;
+  }
+
+  /* 防止文字溢出 */
+  .text-truncate {
+    @apply truncate;
+    min-width: 0;
+  }
+}
+
+/* 小螢幕優化 */
+@media (max-width: 640px) {
+  .container {
+    @apply px-2;
+  }
+
+  /* 縮小字體 */
+  .responsive-text {
+    font-size: clamp(0.75rem, 2.5vw, 1rem);
+  }
+}
+
+/* 列印樣式 */
+@media print {
+  .no-print {
+    display: none !important;
   }
 }

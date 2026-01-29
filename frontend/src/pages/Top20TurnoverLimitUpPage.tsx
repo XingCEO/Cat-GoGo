@@ -17,7 +17,8 @@ import { Input } from '@/components/ui/input';
 import { Top20Charts } from '@/components/Top20Charts';
 import { StockAnalysisDialog } from '@/components/StockAnalysisDialog';
 import { formatPercent, formatNumber, formatPrice, getChangeColor } from '@/utils/format';
-import { getTop20LimitUp, downloadExportFile } from '@/services/api';
+import { getTop20LimitUp, downloadExportFile, getTradingDate } from '@/services/api';
+import { useStore } from '@/store/store';
 import {
     ChevronLeft, ChevronRight, Flame, Trophy, Search,
     Download, Calendar, ArrowUpDown, AlertCircle, BarChart2, LineChart
@@ -69,7 +70,7 @@ function getStockAnnotations(stock: TurnoverStock): string[] {
 }
 
 export function Top20TurnoverLimitUpPage() {
-    const [queryDate, setQueryDate] = useState('');
+    const { queryDate, setQueryDate } = useStore();
     const [sorting, setSorting] = useState<SortingState>([
         { id: 'turnover_rank', desc: false }
     ]);
@@ -92,18 +93,15 @@ export function Top20TurnoverLimitUpPage() {
     // Set default date - fetch from API to get correct latest trading date
     const { data: tradingDateData } = useQuery({
         queryKey: ['tradingDate'],
-        queryFn: async () => {
-            const response = await fetch('/api/trading-date');
-            const result = await response.json();
-            return result.data;
-        },
+        queryFn: getTradingDate,
     });
 
+    // 只有當全局日期為空時才設定初始值
     useEffect(() => {
         if (tradingDateData?.latest_trading_day && !queryDate) {
             setQueryDate(tradingDateData.latest_trading_day);
         }
-    }, [tradingDateData, queryDate]);
+    }, [tradingDateData, queryDate, setQueryDate]);
 
     // Fetch data
     const { data, isLoading, error, refetch } = useQuery({
