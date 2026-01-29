@@ -32,6 +32,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CWD = os.getcwd()
 
 FRONTEND_PATHS = [
+    os.path.join(BASE_DIR, "static"),                       # Render: backend/static
     os.path.join(CWD, "..", "frontend", "dist"),           # portable: from backend/, ../frontend/dist
     os.path.join(CWD, "frontend", "dist"),                  # if cwd is project root
     os.path.join(BASE_DIR, "..", "frontend", "dist"),       # dev: relative to main.py
