@@ -31,25 +31,31 @@ FRONTEND_DIR = None
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CWD = os.getcwd()
 
+logger.info(f"BASE_DIR: {BASE_DIR}")
+logger.info(f"CWD: {CWD}")
+
 FRONTEND_PATHS = [
     os.path.join(BASE_DIR, "static"),                       # Render: backend/static
+    os.path.join(CWD, "static"),                            # Render: cwd/static
     os.path.join(CWD, "..", "frontend", "dist"),           # portable: from backend/, ../frontend/dist
     os.path.join(CWD, "frontend", "dist"),                  # if cwd is project root
     os.path.join(BASE_DIR, "..", "frontend", "dist"),       # dev: relative to main.py
-    os.path.join(BASE_DIR, "..", "..", "frontend", "dist"), # another dev layout
 ]
 
 for path in FRONTEND_PATHS:
     abs_path = os.path.abspath(path)
     index_file = os.path.join(abs_path, "index.html")
+    logger.info(f"Checking: {abs_path} -> exists: {os.path.isfile(index_file)}")
     if os.path.isfile(index_file):
         FRONTEND_DIR = abs_path
+        logger.info(f"✓ Frontend found: {FRONTEND_DIR}")
         break
 
-if FRONTEND_DIR:
-    logger.info(f"✓ Frontend found: {FRONTEND_DIR}")
-else:
+if not FRONTEND_DIR:
     logger.warning("✗ Frontend not found - API only mode")
+    # List what's in the directories for debugging
+    logger.warning(f"Contents of BASE_DIR: {os.listdir(BASE_DIR) if os.path.isdir(BASE_DIR) else 'N/A'}")
+    logger.warning(f"Contents of CWD: {os.listdir(CWD) if os.path.isdir(CWD) else 'N/A'}")
 
 
 @asynccontextmanager
