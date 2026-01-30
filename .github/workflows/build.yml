@@ -9,9 +9,6 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
-    strategy:
-      matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
 
     steps:
       - uses: actions/checkout@v4
@@ -21,71 +18,32 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Install Rust (stable)
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm install
 
-      - name: Install backend dependencies
-        working-directory: backend
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+      - name: Build Tauri App (Apple Silicon)
+        working-directory: frontend
+        run: npm run tauri build -- --target aarch64-apple-darwin
 
-      - name: Build Python backend
-        working-directory: backend
-        run: |
-          pyinstaller --onefile --name python-backend \
-            --add-data "twse_filter.db:." \
-            --add-data "main.py:." \
-            --add-data "config.py:." \
-            --add-data "database.py:." \
-            --add-data "routers:routers" \
-            --add-data "schemas:schemas" \
-            --add-data "services:services" \
-            --add-data "models:models" \
-            --add-data "utils:utils" \
-            --hidden-import uvicorn.logging \
-            --hidden-import uvicorn.loops \
-            --hidden-import uvicorn.loops.auto \
-            --hidden-import uvicorn.protocols \
-            --hidden-import uvicorn.protocols.http \
-            --hidden-import uvicorn.protocols.http.auto \
-            --hidden-import uvicorn.protocols.websockets \
-            --hidden-import uvicorn.protocols.websockets.auto \
-            --hidden-import uvicorn.lifespan \
-            --hidden-import uvicorn.lifespan.on \
-            --hidden-import aiosqlite \
-            --hidden-import sqlalchemy.dialects.sqlite \
-            run_server.py
-          cp dist/python-backend ../frontend/src-tauri/binaries/python-backend-${{ matrix.target }}
-          chmod +x ../frontend/src-tauri/binaries/python-backend-${{ matrix.target }}
+      - name: Build Tauri App (Intel)
+        working-directory: frontend
+        run: npm run tauri build -- --target x86_64-apple-darwin
 
-      - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: frontend
-          args: --target ${{ matrix.target }}
-
-      - name: Upload artifacts
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: app-macos-${{ matrix.target }}
+          name: app-macos
           path: |
-            frontend/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            frontend/src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+            frontend/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            frontend/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
 
   build-windows:
     runs-on: windows-latest
@@ -98,40 +56,20 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (stable)
+        run: |
+          rustup update stable
+          rustup default stable
 
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm install
 
-      - name: Install backend dependencies
-        working-directory: backend
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Build Python backend
-        working-directory: backend
-        shell: cmd
-        run: |
-          pyinstaller --onefile --name python-backend --add-data "twse_filter.db;." --add-data "main.py;." --add-data "config.py;." --add-data "database.py;." --add-data "routers;routers" --add-data "schemas;schemas" --add-data "services;services" --add-data "models;models" --add-data "utils;utils" --hidden-import uvicorn.logging --hidden-import uvicorn.loops --hidden-import uvicorn.loops.auto --hidden-import uvicorn.protocols --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on --hidden-import aiosqlite --hidden-import sqlalchemy.dialects.sqlite run_server.py
-          copy dist\python-backend.exe ..\frontend\src-tauri\binaries\python-backend-x86_64-pc-windows-msvc.exe
-
       - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: frontend
+        working-directory: frontend
+        run: npm run tauri build
 
-      - name: Upload artifacts
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: app-windows
