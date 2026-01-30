@@ -27,8 +27,8 @@ interface StoreState {
 }
 
 const defaultFilterParams: FilterParams = {
-    change_min: 2,
-    change_max: 3,
+    change_min: undefined,
+    change_max: undefined,
     volume_min: 500,
     volume_max: undefined,
     price_min: undefined,

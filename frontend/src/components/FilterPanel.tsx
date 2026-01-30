@@ -53,11 +53,11 @@ export function FilterPanel({ onSearch, isLoading, queryDate, onDateChange }: Fi
                     <div className="space-y-2">
                         <Label>漲幅區間 (%)</Label>
                         <div className="flex gap-2 items-center">
-                            <Input type="number" step="0.1" placeholder="預設 2%"
+                            <Input type="number" step="0.1" placeholder="不限"
                                 value={filterParams.change_min === undefined ? '' : filterParams.change_min}
                                 onChange={(e) => setFilterParams({ change_min: e.target.value ? parseFloat(e.target.value) : undefined })} />
                             <span className="text-muted-foreground">~</span>
-                            <Input type="number" step="0.1" placeholder="預設 3%"
+                            <Input type="number" step="0.1" placeholder="不限"
                                 value={filterParams.change_max === undefined ? '' : filterParams.change_max}
                                 onChange={(e) => setFilterParams({ change_max: e.target.value ? parseFloat(e.target.value) : undefined })} />
                             <span className="text-muted-foreground text-sm">%</span>

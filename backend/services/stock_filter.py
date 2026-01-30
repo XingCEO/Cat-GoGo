@@ -185,12 +185,21 @@ class StockFilter:
         # Process all stocks efficiently - skip per-stock historical API calls for performance
         for _, row in df.iterrows():
             symbol = row["stock_id"]
-            
+
+            # Handle NaN values properly - pandas NaN is not falsy
+            stock_name = row.get("stock_name")
+            if pd.isna(stock_name):
+                stock_name = symbol
+
+            industry = row.get("industry_category")
+            if pd.isna(industry):
+                industry = ""
+
             # Build result dict from daily data (no slow per-stock API calls)
             result = {
                 "symbol": symbol,
-                "name": row.get("stock_name", row.get("stock_id")),
-                "industry": row.get("industry_category", ""),
+                "name": stock_name,
+                "industry": industry,
                 "open_price": row.get("open"),
                 "high_price": row.get("max", row.get("high")),
                 "low_price": row.get("min", row.get("low")),

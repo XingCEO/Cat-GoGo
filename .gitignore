@@ -34,3 +34,5 @@ yarn-error.log*
 # Database
 *.sqlite3
 *.db
+frontend/src-tauri/binaries/python-backend-*
+!frontend/src-tauri/binaries/.gitkeep

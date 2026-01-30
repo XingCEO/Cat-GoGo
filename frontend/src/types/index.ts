@@ -40,9 +40,9 @@ export interface StockDetail extends Stock {
 // Filter params
 export interface FilterParams {
     date?: string;
-    change_min: number;
-    change_max: number;
-    volume_min: number;
+    change_min?: number;
+    change_max?: number;
+    volume_min?: number;
     volume_max?: number;
     price_min?: number;
     price_max?: number;

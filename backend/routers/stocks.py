@@ -20,9 +20,9 @@ router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 @router.get("/filter", response_model=APIResponse[StockListResponse])
 async def filter_stocks(
     date: Optional[str] = Query(None, description="查詢日期 YYYY-MM-DD"),
-    change_min: float = Query(2.0, description="漲幅下限(%)"),
-    change_max: float = Query(3.0, description="漲幅上限(%)"),
-    volume_min: int = Query(500, description="最小成交量(張)"),
+    change_min: Optional[float] = Query(None, description="漲幅下限(%)"),
+    change_max: Optional[float] = Query(None, description="漲幅上限(%)"),
+    volume_min: Optional[int] = Query(None, description="最小成交量(張)"),
     volume_max: Optional[int] = Query(None, description="最大成交量(張)"),
     price_min: Optional[float] = Query(None, description="最低股價"),
     price_max: Optional[float] = Query(None, description="最高股價"),

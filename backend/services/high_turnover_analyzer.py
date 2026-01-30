@@ -341,10 +341,18 @@ class HighTurnoverAnalyzer:
                 else:
                     change_pct = 0
                 
+                # Handle NaN values properly
+                stock_name = row.get("stock_name", row.get("name", ""))
+                if pd.isna(stock_name):
+                    stock_name = symbol
+                industry = row.get("industry_category", row.get("industry", ""))
+                if pd.isna(industry):
+                    industry = ""
+
                 stock_data = {
                     "symbol": symbol,
-                    "name": row.get("stock_name", row.get("name", "")),
-                    "industry": row.get("industry_category", row.get("industry", "")),
+                    "name": stock_name,
+                    "industry": industry,
                     "close_price": close,
                     "prev_close": prev_close if prev_close > 0 else None,
                     "change_percent": round(change_pct, 2),

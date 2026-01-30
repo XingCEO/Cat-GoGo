@@ -73,19 +73,25 @@ class EnhancedKLineService:
             return {"error": "起始日期不能大於結束日期"}
         
         logger.info(f"取得 K 線資料: {symbol} {start_date} ~ {end_date}")
-        
-        # 嘗試從快取取得
-        cached_data = await self._get_from_cache(symbol, start_dt, end_dt)
-        
-        if cached_data is not None and len(cached_data) > 0:
-            logger.info(f"從快取取得 {len(cached_data)} 筆資料")
-            df = pd.DataFrame(cached_data)
+
+        # 先嘗試從快取取得任何可用資料
+        cached_any = await self._get_from_cache_any(symbol)
+        if cached_any is not None and len(cached_any) > 0:
+            logger.info(f"使用快取資料: {len(cached_any)} 筆")
+            df = pd.DataFrame(cached_any)
         else:
-            # 從 API 抓取並快取
-            df = await self._fetch_and_cache(symbol, start_date, end_date)
-            
-            if df.empty:
-                return {"error": f"無法取得 {symbol} 的歷史資料"}
+            # 嘗試從快取取得指定範圍
+            cached_data = await self._get_from_cache(symbol, start_dt, end_dt)
+
+            if cached_data is not None and len(cached_data) > 0:
+                logger.info(f"從快取取得 {len(cached_data)} 筆資料")
+                df = pd.DataFrame(cached_data)
+            else:
+                # 從 API 抓取並快取
+                df = await self._fetch_and_cache(symbol, start_date, end_date)
+
+                if df.empty:
+                    return {"error": f"無法取得 {symbol} 的歷史資料，API 暫時無法使用"}
         
         # 資料驗證與清理
         df = self._validate_and_clean_data(df)
@@ -164,7 +170,27 @@ class EnhancedKLineService:
                     return None
                 
                 return [row.to_dict() for row in rows]
-                
+
+        except Exception as e:
+            logger.error(f"讀取快取失敗: {e}")
+            return None
+
+    async def _get_from_cache_any(self, symbol: str) -> Optional[List[Dict]]:
+        """從資料庫取得任何可用的快取資料（不檢查完整性）"""
+        try:
+            async with async_session_maker() as session:
+                stmt = select(KLineCache).where(
+                    KLineCache.symbol == symbol,
+                    KLineCache.is_valid == 1
+                ).order_by(KLineCache.date)
+
+                result = await session.execute(stmt)
+                rows = result.scalars().all()
+
+                if rows:
+                    return [row.to_dict() for row in rows]
+                return None
+
         except Exception as e:
             logger.error(f"讀取快取失敗: {e}")
             return None

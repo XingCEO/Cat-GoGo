@@ -18,8 +18,7 @@ class TurnoverStockItem(BaseModel):
     turnover_rate: float = Field(..., description="周轉率 %")
     volume: Optional[int] = Field(None, description="成交量(張)")
     float_shares: Optional[float] = Field(None, description="流通股數(萬股)")
-    
-    # 漲停相關
+        # 漲停相關
     is_limit_up: bool = Field(False, description="是否漲停")
     limit_up_type: Optional[str] = Field(None, description="漲停類型")
     seal_volume: Optional[int] = Field(None, description="封單量(張)")

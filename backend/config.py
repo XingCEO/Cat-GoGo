@@ -41,9 +41,13 @@ class Settings(BaseSettings):
     api_retry_count: int = 3
     api_retry_delay: float = 1.0
     
+    # Legacy/extra cache settings
+    cache_expire_seconds: int = 300
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache()
